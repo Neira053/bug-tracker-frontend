@@ -1,283 +1,420 @@
-"use client";
+'use client';
 
-import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
-import API from "@/lib/api";
-import ProtectedRoute from "@/components/ProtectedRoutes";
-import { useAuthContext } from "@/context/AuthContext";
-import { ArrowLeft, AlertCircle, Loader2 } from "lucide-react";
-
-// TypeScript interfaces
-interface User {
-  _id: string;
-  name: string;
-  email: string;
-  role: 'ADMIN' | 'TESTER' | 'DEVELOPER';
-}
+import { useEffect, useState } from 'react';
+import { useParams, useRouter } from 'next/navigation';
+import API from '@/lib/api';
+import ProtectedRoute from '@/components/ProtectedRoutes';
+import useAuth from '@/hooks/useAuth';
+import { Loader2, AlertCircle, ArrowLeft, Calendar, User, FolderOpen, Edit2, Check, X } from 'lucide-react';
 
 interface Bug {
   _id: string;
   title: string;
-  description: string;
-  status: 'OPEN' | 'IN_PROGRESS' | 'CLOSED' | 'RESOLVED';
-  priority: 'LOW' | 'MEDIUM' | 'HIGH';
-  projectId: string;
-  createdBy: string;
-  assignedTo?: User;
-  reportedBy?: User;
+  description?: string;
+  status: 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED';
+  priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  projectId: any;
+  reporter: any;
+  assignee?: any;
   createdAt: string;
-  updatedAt: string;
+  updatedAt?: string;
 }
-
-interface BugResponse {
-  data: Bug;
-}
-
-type BugStatus = 'OPEN' | 'IN_PROGRESS' | 'CLOSED' | 'RESOLVED';
 
 export default function BugDetailPage() {
-  const params = useParams<{ id: string }>();
+  const params = useParams();
   const router = useRouter();
-  const { user } = useAuthContext();
-  const id = params.id;
-
+  const { user } = useAuth();
+  const bugId = params.id as string;
+  
   const [bug, setBug] = useState<Bug | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [updating, setUpdating] = useState(false);
-  const [newStatus, setNewStatus] = useState<BugStatus>("OPEN");
+  const [error, setError] = useState('');
+  
+  // Status update states
+  const [editingStatus, setEditingStatus] = useState(false);
+  const [newStatus, setNewStatus] = useState<Bug['status']>('OPEN');
+  const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
 
   useEffect(() => {
-    if (!id) return;
+    fetchData();
+  }, [bugId]);
 
-    const fetchBug = async () => {
-      try {
-        setLoading(true);
-        const res = await API.get<BugResponse>(`/bugs/${id}`);
-        setBug(res.data);
-        setNewStatus(res.data.status);
-      } catch (err: any) {
-        console.error("[BUG DETAIL] Failed to load bug:", err.message);
-        setError("Failed to load bug details");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchBug();
-  }, [id]);
-
-  const handleStatusUpdate = async () => {
-    if (!bug || newStatus === bug.status) return;
-
-    setUpdating(true);
-    setError("");
-
+  const fetchData = async () => {
     try {
-      console.log("[BUG DETAIL] Updating status to:", newStatus);
+      setLoading(true);
+      setError('');
       
-      // ✅ CORRECT: Use /bugs/:id/status endpoint
-      const res = await API.patch<BugResponse>(`/bugs/${id}/status`, { status: newStatus });
+      console.log('[BUG DETAIL] Fetching bug:', bugId);
+      const response = await API.get(`/bugs/${bugId}`);
       
-      setBug(res.data);
-      console.log("[BUG DETAIL] ✅ Bug status updated successfully");
+      console.log('[BUG DETAIL] Raw response:', response);
+      
+      // ✅ SAFE RESPONSE PARSING
+      let bugData: Bug | null = null;
+      
+      if (response && (response._id || response.id)) {
+        bugData = { ...response, _id: response._id || response.id };
+      } else if (response && response.data && (response.data._id || response.data.id)) {
+        bugData = { ...response.data, _id: response.data._id || response.data.id };
+      } else if (response && response.bug && (response.bug._id || response.bug.id)) {
+        bugData = { ...response.bug, _id: response.bug._id || response.bug.id };
+      } else {
+        throw new Error('Could not parse bug data from response');
+      }
+      
+      if (!bugData || !bugData.status) {
+        throw new Error('Bug data is invalid');
+      }
+      
+      console.log('[BUG DETAIL] ✅ Bug loaded:', bugData);
+      setBug(bugData);
+      setNewStatus(bugData.status);
+      
     } catch (err: any) {
-      console.error("[BUG DETAIL] ❌ Failed to update bug:", err.message);
-      setError("Failed to update bug status");
+      console.error('[BUG DETAIL] Error:', err);
+      setError(err.response?.data?.message || err.message || 'Failed to load bug');
     } finally {
-      setUpdating(false);
+      setLoading(false);
     }
   };
 
-  const handleStatusChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    setNewStatus(e.target.value as BugStatus);
+  // ✅ SIMPLIFIED UPDATE FUNCTION
+  const handleUpdateStatus = async () => {
+    if (!bug) {
+      console.error('[UPDATE] No bug data!');
+      return;
+    }
+
+    // ⚠️ REMOVED THE EARLY RETURN - Allow saving even if status appears unchanged
+    // This is needed when tester has only one option (CLOSED)
+    console.log('[UPDATE] Proceeding with update...');
+    console.log('[UPDATE] Current bug.status:', bug.status);
+    console.log('[UPDATE] New status to save:', newStatus);
+
+    console.log('🔥 ============================================');
+    console.log('🔥 UPDATING STATUS');
+    console.log('🔥 Bug ID:', bug._id);
+    console.log('🔥 Old Status:', bug.status);
+    console.log('🔥 New Status:', newStatus);
+    console.log('🔥 ============================================');
+
+    try {
+      setUpdatingStatus(true);
+      setError('');
+      
+      // Make the API call
+      const response = await API.patch(`/bugs/${bug._id}/status`, {
+        status: newStatus
+      });
+
+      console.log('✅ ============================================');
+      console.log('✅ UPDATE SUCCESSFUL!');
+      console.log('✅ Response:', response);
+      console.log('✅ ============================================');
+
+      // ⚠️ CRITICAL: Update the local state
+      console.log('🔄 Updating local state...');
+      console.log('🔄 Before:', bug.status);
+      
+      const updatedBug = { ...bug, status: newStatus };
+      setBug(updatedBug);
+      
+      console.log('🔄 After:', updatedBug.status);
+      console.log('🔄 State updated!');
+      
+      // Close the editor
+      setEditingStatus(false);
+      
+      // Show success message
+      setSuccessMessage(`Bug status updated to ${newStatus}!`);
+      setTimeout(() => setSuccessMessage(''), 3000);
+      
+    } catch (err: any) {
+      console.error('❌ ============================================');
+      console.error('❌ UPDATE FAILED!');
+      console.error('❌ Error:', err);
+      console.error('❌ Status Code:', err.response?.status);
+      console.error('❌ Error Message:', err.response?.data?.message || err.message);
+      console.error('❌ ============================================');
+      
+      // Reset to original
+      setNewStatus(bug.status);
+      
+      // Show error
+      const errorMsg = err.response?.data?.message || err.message || 'Failed to update';
+      setError(errorMsg);
+      setTimeout(() => setError(''), 5000);
+      
+    } finally {
+      setUpdatingStatus(false);
+    }
+  };
+
+  // Check permissions
+  const canUpdateStatus = () => {
+    if (!user || !bug) return false;
+    return user.role === 'ADMIN' || user.role === 'DEVELOPER' || user.role === 'TESTER';
+  };
+
+  // Get available statuses
+  const getAvailableStatuses = (): Bug['status'][] => {
+    if (!user) return [];
+    if (user.role === 'TESTER') return ['CLOSED'];
+    if (user.role === 'ADMIN' || user.role === 'DEVELOPER') {
+      return ['OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED'];
+    }
+    return [];
+  };
+
+  // Status Badge
+  const StatusBadge = ({ status }: { status: string }) => {
+    const configs: Record<string, { className: string; text: string }> = {
+      OPEN: { className: 'bg-red-100 text-red-700 border-red-300', text: 'Open' },
+      IN_PROGRESS: { className: 'bg-blue-100 text-blue-700 border-blue-300', text: 'In Progress' },
+      RESOLVED: { className: 'bg-green-100 text-green-700 border-green-300', text: 'Resolved' },
+      CLOSED: { className: 'bg-gray-100 text-gray-700 border-gray-300', text: 'Closed' }
+    };
+    const config = configs[status] || configs.OPEN;
+    return (
+      <span className={`px-3 py-1.5 rounded-full text-sm font-medium border ${config.className}`}>
+        {config.text}
+      </span>
+    );
+  };
+
+  // Priority Badge
+  const PriorityBadge = ({ priority }: { priority: string }) => {
+    const configs: Record<string, { className: string }> = {
+      CRITICAL: { className: 'bg-red-100 text-red-700 border-red-300' },
+      HIGH: { className: 'bg-orange-100 text-orange-700 border-orange-300' },
+      MEDIUM: { className: 'bg-yellow-100 text-yellow-700 border-yellow-300' },
+      LOW: { className: 'bg-green-100 text-green-700 border-green-300' }
+    };
+    const config = configs[priority] || configs.MEDIUM;
+    return (
+      <span className={`px-3 py-1.5 rounded-full text-sm font-medium border ${config.className}`}>
+        {priority}
+      </span>
+    );
   };
 
   if (loading) {
     return (
       <ProtectedRoute>
         <div className="min-h-screen bg-background flex items-center justify-center">
-          <div className="flex flex-col items-center gap-2">
-            <Loader2 className="animate-spin w-8 h-8 text-primary" />
-            <p className="text-muted-foreground">Loading bug details...</p>
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        </div>
+      </ProtectedRoute>
+    );
+  }
+
+  if (!bug) {
+    return (
+      <ProtectedRoute>
+        <div className="min-h-screen bg-background flex items-center justify-center">
+          <div className="text-center">
+            <AlertCircle className="w-12 h-12 mx-auto mb-3 text-muted-foreground" />
+            <p className="text-muted-foreground mb-4">{error || 'Bug not found'}</p>
+            <button
+              onClick={() => router.push('/bugs')}
+              className="px-4 py-2 bg-primary text-primary-foreground rounded-lg"
+            >
+              Back to Bugs
+            </button>
           </div>
         </div>
       </ProtectedRoute>
     );
   }
 
-  if (error || !bug) {
-    return (
-      <ProtectedRoute>
-        <main className="min-h-screen bg-background">
-          <div className="max-w-4xl mx-auto px-4 py-8">
-            <button
-              onClick={() => router.back()}
-              className="flex items-center gap-2 text-primary hover:text-primary/80 mb-6"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Back
-            </button>
-
-            <div className="p-6 rounded-lg bg-destructive/10 border border-destructive/20">
-              <div className="flex gap-3">
-                <AlertCircle className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
-                <div>
-                  <h2 className="font-semibold text-destructive">Error</h2>
-                  <p className="text-muted-foreground text-sm mt-1">
-                    {error || "Bug not found"}
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </main>
-      </ProtectedRoute>
-    );
-  }
-
-  // Check if user can update status
-  const canUpdateStatus = user?.role === 'DEVELOPER' || user?.role === 'ADMIN';
-
   return (
     <ProtectedRoute>
       <main className="min-h-screen bg-background">
-        <div className="max-w-4xl mx-auto px-4 py-8">
-          {/* Back button */}
+        <div className="max-w-5xl mx-auto px-4 py-8">
+          {/* Back Button */}
           <button
             onClick={() => router.back()}
-            className="flex items-center gap-2 text-primary hover:text-primary/80 mb-6 transition-colors"
+            className="flex items-center gap-2 text-muted-foreground hover:text-foreground mb-6"
           >
             <ArrowLeft className="w-4 h-4" />
-            Back to Issues
+            Back
           </button>
 
-          {/* Error message */}
-          {error && (
-            <div className="mb-6 p-4 rounded-lg bg-destructive/10 text-destructive flex gap-2">
-              <AlertCircle className="w-5 h-5 flex-shrink-0" />
-              {error}
+          {/* Success Message */}
+          {successMessage && (
+            <div className="mb-4 p-4 rounded-lg bg-green-50 text-green-700 border border-green-300 flex gap-2">
+              <Check className="w-5 h-5 flex-shrink-0 mt-0.5" />
+              <p className="font-medium">{successMessage}</p>
             </div>
           )}
 
-          {/* Bug details card */}
-          <div className="bg-card border border-border rounded-xl p-8">
-            {/* Header */}
-            <div className="mb-6 pb-6 border-b border-border">
-              <h1 className="text-3xl font-bold text-foreground mb-2">{bug.title}</h1>
-              <p className="text-muted-foreground">{bug.description}</p>
+          {/* Error Message */}
+          {error && (
+            <div className="mb-4 p-4 rounded-lg bg-destructive/10 text-destructive border border-destructive/30 flex gap-2">
+              <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+              <p className="text-sm">{error}</p>
             </div>
+          )}
 
-            {/* Meta information */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-8">
-              {/* Status */}
-              <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-                  Status
-                </p>
-                {canUpdateStatus ? (
-                  <div className="flex gap-2 items-center">
-                    <select
-                      value={newStatus}
-                      onChange={handleStatusChange}
-                      className="px-3 py-2 border border-border rounded-lg bg-background text-foreground text-sm"
-                    >
-                      <option value="OPEN">Open</option>
-                      <option value="IN_PROGRESS">In Progress</option>
-                      <option value="RESOLVED">Resolved</option>
-                      <option value="CLOSED">Closed</option>
-                    </select>
-                    {newStatus !== bug.status && (
-                      <button
-                        onClick={handleStatusUpdate}
-                        disabled={updating}
-                        className="px-3 py-2 bg-primary text-primary-foreground rounded text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
-                      >
-                        {updating ? "..." : "Save"}
-                      </button>
-                    )}
-                  </div>
-                ) : (
-                  <span
-                    className={`inline-block px-3 py-2 rounded-lg text-sm font-medium ${
-                      bug.status === "OPEN"
-                        ? "bg-red-500/10 text-red-600"
-                        : bug.status === "IN_PROGRESS"
-                          ? "bg-amber-500/10 text-amber-600"
-                          : "bg-green-500/10 text-green-600"
-                    }`}
+          {/* Bug Header */}
+          <div className="mb-8">
+            <h1 className="text-3xl font-bold text-foreground mb-4">{bug.title}</h1>
+            
+            <div className="flex gap-2 flex-wrap items-center">
+              {/* Status Editor */}
+              {editingStatus ? (
+                <div className="flex items-center gap-2 bg-card border border-border rounded-lg p-2">
+                  <select
+                    value={newStatus}
+                    onChange={(e) => {
+                      const selected = e.target.value as Bug['status'];
+                      console.log('📝 Status changed in dropdown:', selected);
+                      setNewStatus(selected);
+                    }}
+                    className="px-3 py-1 border border-border rounded bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                    disabled={updatingStatus}
                   >
-                    {bug.status.replace('_', ' ')}
-                  </span>
-                )}
-              </div>
-
-              {/* Priority */}
-              <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-                  Priority
-                </p>
-                <span
-                  className={`inline-block px-3 py-2 rounded-lg text-sm font-medium ${
-                    bug.priority === "HIGH"
-                      ? "bg-red-500/10 text-red-600"
-                      : bug.priority === "MEDIUM"
-                        ? "bg-amber-500/10 text-amber-600"
-                        : "bg-green-500/10 text-green-600"
-                  }`}
-                >
-                  {bug.priority}
+                    {getAvailableStatuses().map((status) => (
+                      <option key={status} value={status}>
+                        {status}
+                      </option>
+                    ))}
+                  </select>
+                  
+                  <button
+                    onClick={() => {
+                      console.log('💾 Save button clicked');
+                      handleUpdateStatus();
+                    }}
+                    disabled={updatingStatus}
+                    className="p-1.5 bg-green-500 text-white rounded hover:bg-green-600 transition-colors disabled:opacity-50"
+                  >
+                    {updatingStatus ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Check className="w-4 h-4" />
+                    )}
+                  </button>
+                  
+                  <button
+                    onClick={() => {
+                      console.log('❌ Cancel button clicked');
+                      setEditingStatus(false);
+                      setNewStatus(bug.status);
+                    }}
+                    disabled={updatingStatus}
+                    className="p-1.5 bg-gray-500 text-white rounded hover:bg-gray-600 transition-colors disabled:opacity-50"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <StatusBadge status={bug.status} />
+                  
+                  {canUpdateStatus() && (
+                    <button
+                      onClick={() => {
+                        console.log('✏️ Edit button clicked');
+                        setEditingStatus(true);
+                        
+                        // ✅ AUTO-SELECT THE NEW STATUS FOR TESTERS
+                        if (user?.role === 'TESTER') {
+                          // Tester can only close, so auto-select CLOSED
+                          console.log('🔄 Auto-selecting CLOSED for tester');
+                          setNewStatus('CLOSED');
+                        }
+                      }}
+                      className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-card border border-border rounded transition-colors"
+                      title="Edit status"
+                    >
+                      <Edit2 className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              )}
+              
+              <PriorityBadge priority={bug.priority} />
+              
+              {/* Show role-based hint */}
+              {user?.role === 'TESTER' && !editingStatus && bug.status !== 'CLOSED' && (
+                <span className="text-xs text-muted-foreground">
+                  (You can close this bug)
                 </span>
-              </div>
+              )}
+            </div>
+          </div>
 
-              {/* Reporter */}
-              <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-                  Reporter
-                </p>
-                <p className="text-foreground">{bug.reportedBy?.name || "Unknown"}</p>
-              </div>
+          {/* Description */}
+          {bug.description && (
+            <div className="bg-card border border-border rounded-xl p-6 mb-6">
+              <h2 className="text-lg font-semibold text-foreground mb-3">Description</h2>
+              <p className="text-muted-foreground whitespace-pre-wrap">{bug.description}</p>
+            </div>
+          )}
 
-              {/* Assigned To */}
-              <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-                  Assigned To
-                </p>
-                <p className="text-foreground">
-                  {bug.assignedTo?.name || "Unassigned"}
-                </p>
+          {/* Details Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+            <div className="bg-card border border-border rounded-xl p-5">
+              <div className="flex items-center gap-2 mb-2">
+                <User className="w-4 h-4 text-muted-foreground" />
+                <p className="text-sm font-medium text-muted-foreground">Reporter</p>
               </div>
-
-              {/* Created At */}
-              <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-                  Created
-                </p>
-                <p className="text-foreground text-sm">
-                  {new Date(bug.createdAt).toLocaleDateString()}
-                </p>
-              </div>
-
-              {/* Updated At */}
-              <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-                  Updated
-                </p>
-                <p className="text-foreground text-sm">
-                  {new Date(bug.updatedAt).toLocaleDateString()}
-                </p>
-              </div>
+              <p className="text-foreground font-medium">
+                {typeof bug.reporter === 'object' && bug.reporter 
+                  ? (bug.reporter.name || bug.reporter.email || 'Unknown')
+                  : 'Unknown'}
+              </p>
             </div>
 
-            {/* Permission note */}
-            {!canUpdateStatus && (
-              <div className="mt-6 p-3 rounded-lg bg-muted/50 border border-border">
-                <p className="text-xs text-muted-foreground">
-                  ℹ️ You don't have permission to update bug status. Only Developers and Admins can update status.
-                </p>
+            <div className="bg-card border border-border rounded-xl p-5">
+              <div className="flex items-center gap-2 mb-2">
+                <User className="w-4 h-4 text-muted-foreground" />
+                <p className="text-sm font-medium text-muted-foreground">Assignee</p>
               </div>
-            )}
+              <p className="text-foreground font-medium">
+                {bug.assignee 
+                  ? (typeof bug.assignee === 'object' 
+                      ? (bug.assignee.name || bug.assignee.email || 'Assigned')
+                      : 'Assigned')
+                  : 'Unassigned'}
+              </p>
+            </div>
+
+            <div className="bg-card border border-border rounded-xl p-5">
+              <div className="flex items-center gap-2 mb-2">
+                <FolderOpen className="w-4 h-4 text-muted-foreground" />
+                <p className="text-sm font-medium text-muted-foreground">Project</p>
+              </div>
+              <p className="text-foreground font-medium">
+                {typeof bug.projectId === 'object' && bug.projectId
+                  ? (bug.projectId.name || 'Unknown')
+                  : 'Unknown'}
+              </p>
+            </div>
+
+            <div className="bg-card border border-border rounded-xl p-5">
+              <div className="flex items-center gap-2 mb-2">
+                <Calendar className="w-4 h-4 text-muted-foreground" />
+                <p className="text-sm font-medium text-muted-foreground">Created</p>
+              </div>
+              <p className="text-foreground font-medium">
+                {new Date(bug.createdAt).toLocaleDateString('en-US', {
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric'
+                })}
+              </p>
+            </div>
           </div>
+
+          {/* Last Updated */}
+          {bug.updatedAt && (
+            <div className="text-sm text-muted-foreground text-center">
+              Last updated: {new Date(bug.updatedAt).toLocaleString()}
+            </div>
+          )}
         </div>
       </main>
     </ProtectedRoute>

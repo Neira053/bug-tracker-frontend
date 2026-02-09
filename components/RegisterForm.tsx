@@ -167,9 +167,9 @@ export default function RegisterForm() {
             {errors.role.message}
           </p>
         )}
-        <p className="text-xs text-muted-foreground mt-1.5">
+        {/* <p className="text-xs text-muted-foreground mt-1.5">
           💡 Backend uses "DEV" (not "DEVELOPER")
-        </p>
+        </p> */}
       </div>
 
       {/* Password */}
