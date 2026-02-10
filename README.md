@@ -1,7 +1,11 @@
 # Bug Tracker Application
 
 A comprehensive bug tracking and project management system built with Next.js 16, React 19, TypeScript, and Tailwind CSS. This application provides real-time bug tracking, project management, role-based access control, and complete bug workflow management.
+```bash
 
+LIVE DEMO : https://bug-tracker-frontend-one-alpha.vercel.app/
+
+```
 ## ✨ Features
 
 ### Authentication & Authorization
@@ -315,10 +319,6 @@ See individual documentation files:
 - `PRODUCTION_CHECKLIST.md` - Production readiness
 - `IMPLEMENTATION_SUMMARY.md` - What was built
 - `VERIFICATION_REPORT.md` - Testing results
-
-## 📜 License
-
-MIT License - Feel free to use in your projects
 
 ---
 
